@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
 <meta name="theme-color" content="#000000" />
-<title>FLYING RKS</title>
+<title>Flying Mama</title>
 <style>
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html,body { height:100%; margin:0; font-family:Arial,Helvetica,sans-serif; background:#000; touch-action: none; }
@@ -69,7 +69,7 @@ canvas { width:100%; height:100%; display:block; background: linear-gradient(#87
   <canvas id="game"></canvas>
   
   <div id="hud">
-    FLYING RKS — Score: <span id="score">0</span>
+    FLYING MAMA — Score: <span id="score">0</span>
     <button id="mute">🔊</button>
     <button id="pauseBtn">⏸</button>
   </div>
@@ -113,7 +113,7 @@ const pauseOverlay = document.getElementById('pauseOverlay');
 const resumeBtn = document.getElementById('resumeBtn');
 
 // ===== GAME STATE =====
-let score = 0, highScore = parseInt(localStorage.getItem('flyingRksHighScore')||'0',10);
+let score = 0, highScore = parseInt(localStorage.getItem('FlyingmamaHighScore')||'0',10);
 let running = false, over = false, paused = false;
 let obstacleTimer = 0, lastTapTime = 0, restartArmed = false;
 highScoreEl.textContent = highScore;
@@ -297,7 +297,7 @@ function die(){  over=true; running=false; paused=false; restartArmed=false;
   // Update high score
   if(score > highScore){
     highScore = score;
-    localStorage.setItem('flyingRksHighScore', highScore);
+    localStorage.setItem('flyingMamaHighScore', highScore);
     highScoreEl.textContent = highScore;
   }
   
