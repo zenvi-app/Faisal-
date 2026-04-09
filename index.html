@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<meta name="theme-color" content="#000000" />
+<title>FLYING RKS</title>
+<style>
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html,body { height:100%; margin:0; font-family:Arial,Helvetica,sans-serif; background:#000; touch-action: none; }
+#wrap { 
+  width:100%; max-width:480px; height:820px; margin:12px auto; 
+  background:#111; border-radius:12px; overflow:hidden; position:relative; 
+  box-shadow:0 12px 40px rgba(0,0,0,0.7); 
+}
+canvas { width:100%; height:100%; display:block; background: linear-gradient(#87CEEB,#f1c27d); }
+
+#hud { 
+  position:absolute; left:12px; top:12px; color:#fff; font-weight:700; 
+  text-shadow:0 2px 4px rgba(0,0,0,0.7); z-index:20; 
+  font-size: clamp(12px, 2.8vw, 18px); 
+  display:flex; align-items:center; gap:8px;
+}
+#hud button { padding:4px 10px; border-radius:6px; border:none; background:#2b8cff; color:white; font-weight:700; font-size: clamp(10px,2.5vw,14px); cursor:pointer; }
+
+#msg { 
+  position:absolute; left:50%; transform:translateX(-50%); 
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px)); 
+  color:white; text-align:center; z-index:20; font-weight:700; 
+  font-size: clamp(13px, 3.2vw, 18px); 
+  text-shadow:0 2px 6px rgba(0,0,0,0.6);
+  line-height:1.4; padding:0 16px;
+}
+
+#go { 
+  display:none; position:absolute; inset:0; 
+  background:rgba(0,0,0,0.65); 
+  align-items:center; justify-content:center; 
+  z-index:30; padding:20px; 
+}
+#go.active { display:flex; }
+#go .content { 
+  text-align:center; background:rgba(20,20,30,0.9); 
+  padding:20px 24px; border-radius:12px; 
+  box-shadow:0 8px 32px rgba(0,0,0,0.5); 
+  max-width:90%; 
+}
+#go img { max-width:100%; max-height:200px; border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,0.5); }
+#go .caption { 
+  margin-top:12px; color:#fff; font-weight:700;   font-size: clamp(14px, 3.5vw, 20px); 
+  text-shadow:0 2px 6px rgba(0,0,0,0.5); 
+}
+#go .highscore { color:#ffd700; margin-top:6px; font-size: clamp(12px,2.8vw,16px); }
+
+#pauseOverlay {
+  display:none; position:absolute; inset:0; background:rgba(0,0,0,0.5);
+  align-items:center; justify-content:center; z-index:25; flex-direction:column; gap:16px;
+}
+#pauseOverlay.active { display:flex; }
+#pauseOverlay .pauseText { color:#fff; font-size: clamp(18px,4vw,28px); font-weight:700; text-shadow:0 2px 8px rgba(0,0,0,0.7); }
+#pauseOverlay button { padding:10px 24px; border-radius:8px; border:none; background:#2b8cff; color:white; font-weight:700; font-size: clamp(14px,3.2vw,18px); cursor:pointer; }
+
+@media (max-width:420px){ #wrap{height:720px;} }
+@media (max-height:700px){ #wrap{height:100vh; margin:0; border-radius:0;} }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game"></canvas>
+  
+  <div id="hud">
+    FLYING RKS — Score: <span id="score">0</span>
+    <button id="mute">🔊</button>
+    <button id="pauseBtn">⏸</button>
+  </div>
+  
+  <div id="msg">Tap to start · Tap to flap<br><small style="font-weight:400;opacity:0.9">Space/Click also works</small></div>
+  
+  <div id="go">
+    <div class="content">
+      <img id="goImg" src="assets/gameover.png" onerror="this.style.display='none'"/>
+      <div class="caption">Game Over!<br>Score: <span id="finalScore">0</span></div>
+      <div class="highscore">Best: <span id="highScore">0</span></div>
+      <div style="margin-top:14px; color:#ccc; font-size: clamp(11px,2.6vw,14px)">Double tap to restart</div>
+    </div>
+  </div>
+  
+  <div id="pauseOverlay">
+    <div class="pauseText">⏸ PAUSED</div>
+    <button id="resumeBtn">▶ Resume</button>
+  </div>
+</div>
+
+<script>
+// ===== CONFIG =====
+const W = 420, H = 780;
+const GRAVITY = 1000, FLAP_V = -360, OBST_SPEED = 160;
+const OBST_INTERVAL = 1500, OBST_W = 90, GAP = 220;
+const DOUBLE_TAP_MS = 350;
+// ===== DOM =====
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+canvas.width = W; canvas.height = H;
+
+const scoreEl = document.getElementById('score');
+const msgEl = document.getElementById('msg');
+const muteBtn = document.getElementById('mute');
+const pauseBtn = document.getElementById('pauseBtn');
+const go = document.getElementById('go');
+const finalScoreEl = document.getElementById('finalScore');
+const highScoreEl = document.getElementById('highScore');
+const pauseOverlay = document.getElementById('pauseOverlay');
+const resumeBtn = document.getElementById('resumeBtn');
+
+// ===== GAME STATE =====
+let score = 0, highScore = parseInt(localStorage.getItem('flyingRksHighScore')||'0',10);
+let running = false, over = false, paused = false;
+let obstacleTimer = 0, lastTapTime = 0, restartArmed = false;
+highScoreEl.textContent = highScore;
+
+// ===== PLAYER =====
+const player = { x:110, y:H/2, w:72, h:72, vy:0, faceImg:null };
+let obstacles = [];
+
+// ===== ASSETS =====
+let gfImg = null, bgImg = null, muted = false;
+
+// ===== AUDIO =====
+const flapSfx = new Audio('assets/sfx/flap.mp3');
+flapSfx.volume = 0.9;
+const loseSfx = new Audio('assets/sfx/loss.mp3');
+loseSfx.volume = 1.0;
+
+function playSfx(a){ if(!muted){ const n=a.cloneNode(); n.volume=a.volume; n.play().catch(()=>{}); } }
+
+let actx=null, bgBuf=null, bgNode=null, bgGain=null;
+async function ensureBgmReady(){
+  if(!actx) actx = new (window.AudioContext||window.webkitAudioContext)();
+  if(actx.state==='suspended') await actx.resume();
+  if(!bgBuf){
+    try{
+      const res = await fetch('assets/sfx/bgm.mp3');
+      const arr = await res.arrayBuffer();
+      bgBuf = await actx.decodeAudioData(arr);
+    }catch(e){ console.log('BGM not loaded'); }
+  }
+}
+function startBg(vol=0.28){  if(!actx || !bgBuf) return;
+  stopBg();
+  bgNode = actx.createBufferSource();
+  bgNode.buffer = bgBuf; bgNode.loop = true;
+  bgGain = actx.createGain(); bgGain.gain.value = muted ? 0 : vol;
+  bgNode.connect(bgGain).connect(actx.destination);
+  bgNode.start(0);
+}
+function stopBg(){ 
+  if(bgNode){ try{ bgNode.stop(); }catch{}; bgNode.disconnect(); bgNode=null; } 
+  if(bgGain){ bgGain.disconnect(); bgGain=null; } 
+}
+function setBgMuted(on){ if(bgGain) bgGain.gain.value = on?0:0.28; }
+
+// ===== IMAGE LOADER =====
+function loadImage(src){ 
+  return new Promise((res,rej)=>{ 
+    const i=new Image(); 
+    i.onload=()=>res(i); 
+    i.onerror=()=>rej(src); 
+    i.src=src; 
+  }); 
+}
+
+// ===== FIXED drawCover (CSS "cover" behavior) =====
+function drawCover(img, dx, dy, dW, dH){
+  if(!img || dW <= 0 || dH <= 0) return;
+  const sAR = img.width / img.height;
+  const dAR = dW / dH;
+  let sW, sH, sx, sy;
+  
+  if (sAR > dAR) {
+    sH = img.height; sW = sH * dAR;
+    sx = (img.width - sW) / 2; sy = 0;
+  } else {
+    sW = img.width; sH = sW / dAR;
+    sx = 0; sy = (img.height - sH) / 2;
+  }
+  sx = Math.max(0, Math.min(sx, img.width - sW));
+  sy = Math.max(0, Math.min(sy, img.height - sH));
+  sW = Math.min(sW, img.width - sx);
+  sH = Math.min(sH, img.height - sy);
+  ctx.drawImage(img, sx, sy, sW, sH, dx, dy, dW, dH);
+}
+
+// ===== COLLISION =====
+function circleRectCollide(cx,cy,r,rx,ry,rw,rh){
+  const pad=3; rx+=pad; ry+=pad; rw-=2*pad; rh-=2*pad;
+  const nx=Math.max(rx,Math.min(cx,rx+rw));
+  const ny=Math.max(ry,Math.min(cy,ry+rh));  const dx=cx-nx, dy=cy-ny;
+  return (dx*dx+dy*dy) <= r*r;
+}
+
+// ===== SPAWN OBSTACLE (with validation) =====
+function spawnObstacle(){ 
+  const minTop=80, maxTop=H-160-GAP; 
+  const topH = Math.max(40, Math.min(H-GAP-40, Math.random()*(maxTop-minTop)+minTop));
+  obstacles.push({x:W+40, topH:topH, passed:false}); 
+}
+
+// ===== FLAP / INPUT =====
+async function flap(){
+  const now = performance.now();
+  
+  // Start game
+  if(!running && !over && !paused){
+    running = true; over = false; paused = false;
+    obstacles=[]; score=0; player.y=H/2; player.vy=0;
+    scoreEl.textContent = score;
+    go.classList.remove('active');
+    msgEl.style.display='none';
+    pauseOverlay.classList.remove('active');
+    if(!muted){ await ensureBgmReady(); startBg(); }
+    return;
+  }
+  
+  // Paused - ignore flap
+  if(paused) return;
+  
+  // Game Over -> double tap restart
+  if(over){
+    if(!restartArmed){ 
+      restartArmed=true; lastTapTime=now; 
+      msgEl.style.display='block'; 
+      msgEl.innerHTML='Tap again to restart'; 
+      return; 
+    }
+    if(now-lastTapTime <= DOUBLE_TAP_MS){
+      doRestart();
+    } else { 
+      lastTapTime=now; 
+      msgEl.innerHTML='Tap again to restart'; 
+    }
+    return;
+  }
+  
+  // Normal gameplay flap
+  if(running){ 
+    player.vy = FLAP_V;     if(!muted) playSfx(flapSfx); 
+  }
+}
+
+function doRestart(){
+  restartArmed=false; over=false; running=false; paused=false;
+  obstacles=[]; player.y=H/2; player.vy=0; score=0; 
+  scoreEl.textContent=score;
+  msgEl.style.display='block'; 
+  msgEl.innerHTML='Tap to start · Tap to flap<br><small style="font-weight:400;opacity:0.9">Space/Click also works</small>';
+  go.classList.remove('active');
+  pauseOverlay.classList.remove('active');
+}
+
+// ===== PAUSE TOGGLE =====
+function togglePause(){
+  if(over || !running) return;
+  paused = !paused;
+  if(paused){
+    pauseOverlay.classList.add('active');
+    stopBg();
+  } else {
+    pauseOverlay.classList.remove('active');
+    if(!muted && actx && bgBuf) startBg();
+  }
+}
+
+// ===== INPUT EVENTS =====
+window.addEventListener('keydown', e=>{
+  if(e.code==='Space' || e.key===' '){ e.preventDefault(); flap(); }
+  if(e.key==='p' || e.key==='P'){ togglePause(); }
+  if(e.key==='m' || e.key==='M'){ toggleMute(); }
+});
+window.addEventListener('mousedown', e=>{ if(e.target.tagName!=='BUTTON') flap(); });
+window.addEventListener('touchstart', e=>{ 
+  if(e.target.tagName!=='BUTTON'){ e.preventDefault(); flap(); }
+},{passive:false});
+
+muteBtn.onclick = (e)=>{ e.stopPropagation(); toggleMute(); };
+pauseBtn.onclick = (e)=>{ e.stopPropagation(); togglePause(); };
+resumeBtn.onclick = (e)=>{ e.stopPropagation(); togglePause(); };
+
+function toggleMute(){
+  muted = !muted;
+  muteBtn.textContent = muted?'🔇':'🔊';
+  setBgMuted(muted);
+}
+
+// ===== DIE / GAME OVER =====
+function die(){  over=true; running=false; paused=false; restartArmed=false;
+  
+  // Update high score
+  if(score > highScore){
+    highScore = score;
+    localStorage.setItem('flyingRksHighScore', highScore);
+    highScoreEl.textContent = highScore;
+  }
+  
+  msgEl.style.display='block';
+  msgEl.innerHTML=`Game Over!<br>Score: ${score}<br><small>Double tap to restart</small>`;
+  finalScoreEl.textContent = score;
+  go.classList.add('active');
+  
+  stopBg();
+  if(!muted) playSfx(loseSfx);
+}
+
+// ===== UPDATE =====
+function update(dt){
+  if(!running || over || paused) return;
+  
+  // Player physics
+  player.vy += GRAVITY * dt;
+  player.y += player.vy * dt;
+  
+  // Floor/ceiling collision
+  if(player.y + player.h/2 >= H-70){ 
+    player.y = H-70 - player.h/2; 
+    die(); return; 
+  }
+  if(player.y - player.h/2 <= 10){ 
+    player.y = 10 + player.h/2; 
+    player.vy = 0; 
+  }
+  
+  // Spawn obstacles
+  obstacleTimer += dt * 1000;
+  if(obstacleTimer >= OBST_INTERVAL){ 
+    spawnObstacle(); 
+    obstacleTimer = 0; 
+  }
+  
+  // Update obstacles & scoring
+  for(let o of obstacles){ 
+    o.x -= OBST_SPEED * dt; 
+    if(!o.passed && o.x + OBST_W < player.x - 10){ 
+      o.passed = true; 
+      score++; 
+      scoreEl.textContent = score;      // Optional: difficulty increase
+      // if(score % 5 === 0) OBST_SPEED += 5;
+    } 
+  }
+  
+  // Collision detection
+  const cx = player.x, cy = player.y - 18, r = player.w * 0.42;
+  for(const o of obstacles){
+    const hitTop = circleRectCollide(cx, cy, r, o.x, 0, OBST_W, o.topH);
+    const hitBottom = circleRectCollide(cx, cy, r, o.x, o.topH+GAP, OBST_W, H-(o.topH+GAP)-70);
+    if(hitTop || hitBottom){ die(); break; }
+  }
+  
+  // Remove off-screen obstacles
+  obstacles = obstacles.filter(o => o.x > -OBST_W - 50);
+}
+
+// ===== DRAW =====
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  
+  // Background
+  if(bgImg){ 
+    const pattern = ctx.createPattern(bgImg, 'repeat-x'); 
+    ctx.fillStyle = pattern; 
+    ctx.fillRect(0,0,W,H); 
+  } else { 
+    const g = ctx.createLinearGradient(0,0,0,H); 
+    g.addColorStop(0,'#87CEEB'); 
+    g.addColorStop(1,'#f1c27d'); 
+    ctx.fillStyle = g; 
+    ctx.fillRect(0,0,W,H); 
+  }
+  
+  // Ground
+  ctx.fillStyle = '#6b4423'; 
+  ctx.fillRect(0, H-70, W, 70);
+  ctx.fillStyle = '#7c5a3b';
+  ctx.fillRect(0, H-70, W, 10);
+  
+  // Obstacles
+  for(let o of obstacles){
+    const topH = Math.round(o.topH);
+    const bottomY = topH + GAP;
+    const bottomH = H - bottomY - 70;
+    
+    if(gfImg){ 
+      drawCover(gfImg, Math.round(o.x), 0, OBST_W, topH); 
+      drawCover(gfImg, Math.round(o.x), bottomY, OBST_W, bottomH);
+    } else {       ctx.fillStyle = '#4a7c3a'; 
+      ctx.fillRect(Math.round(o.x), 0, OBST_W, topH); 
+      ctx.fillRect(Math.round(o.x), bottomY, OBST_W, bottomH);
+      // Pipe caps
+      ctx.fillStyle = '#3d6630';
+      ctx.fillRect(Math.round(o.x)-4, topH-20, OBST_W+8, 20);
+      ctx.fillRect(Math.round(o.x)-4, bottomY, OBST_W+8, 20);
+    }
+  }
+  
+  // Player
+  ctx.save(); 
+  ctx.translate(player.x, player.y - 18);
+  
+  if(player.faceImg){ 
+    const size = player.w * 0.92;
+    ctx.beginPath(); 
+    ctx.arc(0, 0, size/2, 0, Math.PI*2); 
+    ctx.closePath(); 
+    ctx.clip();
+    ctx.drawImage(player.faceImg, -size/2, -size/2, size, size); 
+  } else {
+    // Fallback player
+    ctx.fillStyle = '#ffd27f'; 
+    ctx.beginPath(); 
+    ctx.arc(0, 0, 24, 0, Math.PI*2); 
+    ctx.fill();
+    ctx.strokeStyle = '#333'; 
+    ctx.lineWidth = 2; 
+    ctx.stroke();
+    ctx.fillStyle = '#333'; 
+    ctx.font = 'bold 16px Arial'; 
+    ctx.textAlign = 'center'; 
+    ctx.textBaseline = 'middle'; 
+    ctx.fillText('RKS', 0, 1);
+  }
+  ctx.restore();
+  
+  // Pause indicator
+  if(paused){
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillRect(0,0,W,H);
+  }
+}
+
+// ===== GAME LOOP =====
+let lastT = 0;
+function loop(t){ 
+  const dt = Math.min(0.033, (t - lastT) / 1000); 
+  lastT = t;   update(dt); 
+  draw(); 
+  requestAnimationFrame(loop); 
+}
+
+// ===== INIT =====
+(async function init(){
+  // Load assets with error handling
+  try { player.faceImg = await loadImage('assets/rks_face.png'); } catch(e){ player.faceImg = null; }
+  try { gfImg = await loadImage('assets/gf_full.png'); } catch(e){ gfImg = null; }
+  try { bgImg = await loadImage('assets/bg.png'); } catch(e){ bgImg = null; }
+  
+  // Show high score
+  highScoreEl.textContent = highScore;
+  
+  // Start loop
+  requestAnimationFrame(loop);
+  
+  // Pre-warm audio context on first interaction
+  const warmAudio = () => { ensureBgmReady(); window.removeEventListener('touchstart', warmAudio); window.removeEventListener('mousedown', warmAudio); };
+  window.addEventListener('touchstart', warmAudio, {once:true});
+  window.addEventListener('mousedown', warmAudio, {once:true});
+})();
+</script>
+</body>
+</html>
